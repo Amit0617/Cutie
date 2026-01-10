@@ -13,7 +13,9 @@ def convert_frames_to_video(
         fps: int = 24,
         bitrate: int = 1,  # in Mbps
         progress_callback=None) -> None:
-    images = [img for img in sorted(os.listdir(image_folder)) if img.endswith(".jpg")]
+    # support common image extensions (rgba frames are in png)
+    images = [img for img in sorted(os.listdir(image_folder))
+              if img.lower().endswith((".jpg", ".jpeg", ".png"))]
     frame = cv2.imread(os.path.join(image_folder, images[0]))
     height, width, layers = frame.shape
 
@@ -26,7 +28,20 @@ def convert_frames_to_video(
     stream.bit_rate = bitrate * (10**7)
 
     for i, img_path in enumerate(images):
-        img = cv2.imread(os.path.join(image_folder, img_path))
+        img_file = os.path.join(image_folder, img_path)
+        img = cv2.imread(img_file, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            raise RuntimeError(f"Failed to read image '{img_file}'")
+
+        # If image has alpha and we're not preserving alpha, composite over green background (same as GUI)
+        if img.ndim == 3 and img.shape[2] == 4:
+            alpha = img[:, :, 3:4].astype(np.float32) / 255.0
+            rgb = img[:, :, :3].astype(np.float32)
+            green = np.array([0, 255, 0], dtype=np.float32)
+            img = (rgb * alpha + green[np.newaxis, np.newaxis, :] * (1 - alpha)).astype(np.uint8)
+        elif img.ndim == 2:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+
         frame = av.VideoFrame.from_ndarray(img, format='bgr24')
         packet = stream.encode(frame)
         output.mux(packet)
